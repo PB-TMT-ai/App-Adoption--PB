@@ -443,7 +443,11 @@ def _highlight_by_status(row):
 
 def _highlight_adoption_rate(row):
     """Color rows by adoption rate: green ≥50%, yellow ≥25%, red <25%."""
-    rate = row.get("Adoption %", 0)
+    raw = row.get("Adoption %", "0%")
+    try:
+        rate = float(str(raw).replace("%", ""))
+    except (ValueError, TypeError):
+        rate = 0
     if rate >= 50:
         return ["background-color: #d1fae5"] * len(row)
     if rate >= 25:
@@ -590,6 +594,7 @@ with tab_summary:
         zone_df["Adoption %"] = (zone_df["Installed"] / zone_df["Total"] * 100).round(1)
         zone_df = zone_df.sort_values("Adoption %", ascending=False)
         zone_df.columns = ["Zone", "Total", "Installed", "Not Installed", "Uninstalled", "Tech Issue / NW", "Adoption %"]
+        zone_df["Adoption %"] = zone_df["Adoption %"].apply(lambda x: f"{x}%")
         styled_zone = (
             zone_df.style
             .apply(_highlight_adoption_rate, axis=1)
@@ -612,6 +617,7 @@ with tab_summary:
         dist_df["Adoption %"] = (dist_df["Installed"] / dist_df["Total"] * 100).round(1)
         dist_df = dist_df.sort_values("Adoption %", ascending=False)
         dist_df.columns = ["Distributor Name", "Total", "Installed", "Not Installed", "Uninstalled", "Tech Issue / NW", "Adoption %"]
+        dist_df["Adoption %"] = dist_df["Adoption %"].apply(lambda x: f"{x}%")
         styled_dist = (
             dist_df.style
             .apply(_highlight_adoption_rate, axis=1)
@@ -687,8 +693,13 @@ with tab_orders:
             order_cols = ["Account Sf ID", "Name of the Dealer", "Zone", "Distributor Name",
                           "# orders (total)", "# orders (via. app.)", "% orders via. app.", "Status"]
             avail_order = [c for c in order_cols if c in app_users.columns]
+            display_orders = app_users[avail_order].copy()
+            if "% orders via. app." in display_orders.columns:
+                display_orders["% orders via. app."] = display_orders["% orders via. app."].apply(
+                    lambda x: f"{x:.1f}%" if pd.notna(x) else ""
+                )
             styled_orders = (
-                app_users[avail_order].style
+                display_orders.style
                 .apply(_highlight_by_status, axis=1)
                 .apply(_bold_columns("Name of the Dealer", "# orders (via. app.)"), axis=0)
             )
