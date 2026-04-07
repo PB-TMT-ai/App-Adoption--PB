@@ -6,8 +6,8 @@ import tempfile
 import pandas as pd
 import pytest
 
-from scripts.config import get_column_names, SAMPLE_DATA
-from scripts.validate import validate_upload, normalize_columns
+from scripts.config import get_excel_columns, SAMPLE_DATA, VALID_STATUSES
+from scripts.validate import validate_upload
 
 
 @pytest.fixture
@@ -16,106 +16,93 @@ def tmp_dir():
         yield d
 
 
-def _create_excel(path, data, columns=None):
+def _create_excel(path, data):
     """Helper to create an Excel file from a list of dicts."""
     df = pd.DataFrame(data)
-    if columns:
-        df = df[columns]
     df.to_excel(path, index=False, engine="openpyxl")
     return path
 
 
-class TestValidateDealers:
-    def test_valid_dealer_file(self, tmp_dir):
-        path = os.path.join(tmp_dir, "dealers.xlsx")
-        _create_excel(path, SAMPLE_DATA["dealers"])
-        is_valid, messages = validate_upload(path, "dealers")
+class TestValidateAppAdoption:
+    def test_valid_file(self, tmp_dir):
+        path = os.path.join(tmp_dir, "test.xlsx")
+        _create_excel(path, SAMPLE_DATA)
+        is_valid, messages = validate_upload(path)
         assert is_valid
-        assert any("passed" in m.lower() for m in messages)
 
     def test_missing_required_column(self, tmp_dir):
-        path = os.path.join(tmp_dir, "dealers.xlsx")
-        data = [{"dealer_name": "Test Dealer"}]  # Missing dealer_id
+        path = os.path.join(tmp_dir, "test.xlsx")
+        data = [{"Name of the Dealer": "Test", "Status": "Installed"}]  # Missing Account Sf ID
         _create_excel(path, data)
-        is_valid, messages = validate_upload(path, "dealers")
+        is_valid, messages = validate_upload(path)
         assert not is_valid
-        assert any("dealer_id" in m for m in messages)
+        assert any("Account Sf ID" in m for m in messages)
 
-    def test_blank_required_field(self, tmp_dir):
-        path = os.path.join(tmp_dir, "dealers.xlsx")
-        data = [{"dealer_id": "DLR001", "dealer_name": None}]
+    def test_blank_dealer_name_is_warning(self, tmp_dir):
+        """Blank dealer name is a warning (not error) since real data has this."""
+        path = os.path.join(tmp_dir, "test.xlsx")
+        data = [{"Account Sf ID": "001", "Name of the Dealer": None, "Status": "Installed"}]
         _create_excel(path, data)
-        is_valid, messages = validate_upload(path, "dealers")
-        assert not is_valid
+        is_valid, messages = validate_upload(path)
+        assert is_valid
         assert any("blank" in m.lower() for m in messages)
 
+    def test_blank_account_sf_id_is_error(self, tmp_dir):
+        path = os.path.join(tmp_dir, "test.xlsx")
+        data = [{"Account Sf ID": None, "Name of the Dealer": "Test", "Status": "Installed"}]
+        _create_excel(path, data)
+        is_valid, messages = validate_upload(path)
+        assert not is_valid
+
+    def test_invalid_status_warning(self, tmp_dir):
+        path = os.path.join(tmp_dir, "test.xlsx")
+        data = [{"Account Sf ID": "001", "Name of the Dealer": "Test", "Status": "Unknown"}]
+        _create_excel(path, data)
+        is_valid, messages = validate_upload(path)
+        # Invalid status is a warning, not an error
+        assert is_valid
+        assert any("unexpected values" in m.lower() for m in messages)
+
     def test_duplicate_primary_key(self, tmp_dir):
-        path = os.path.join(tmp_dir, "dealers.xlsx")
+        path = os.path.join(tmp_dir, "test.xlsx")
         data = [
-            {"dealer_id": "DLR001", "dealer_name": "Dealer A"},
-            {"dealer_id": "DLR001", "dealer_name": "Dealer B"},
+            {"Account Sf ID": "001", "Name of the Dealer": "A", "Status": "Installed"},
+            {"Account Sf ID": "001", "Name of the Dealer": "B", "Status": "Installed"},
         ]
         _create_excel(path, data)
-        is_valid, messages = validate_upload(path, "dealers")
-        # Duplicates are warnings, not errors
-        assert is_valid
+        is_valid, messages = validate_upload(path)
+        assert is_valid  # Duplicates are warnings
         assert any("duplicate" in m.lower() for m in messages)
 
     def test_extra_columns_warning(self, tmp_dir):
-        path = os.path.join(tmp_dir, "dealers.xlsx")
-        data = [{"dealer_id": "DLR001", "dealer_name": "Test", "extra_col": "value"}]
+        path = os.path.join(tmp_dir, "test.xlsx")
+        data = [{"Account Sf ID": "001", "Name of the Dealer": "Test", "Status": "Installed", "Extra Col": "x"}]
         _create_excel(path, data)
-        is_valid, messages = validate_upload(path, "dealers")
+        is_valid, messages = validate_upload(path)
         assert is_valid
-        assert any("unexpected" in m.lower() or "extra_col" in m for m in messages)
+        assert any("unexpected" in m.lower() for m in messages)
 
-
-class TestValidateInstallEvents:
-    def test_valid_install_events(self, tmp_dir):
-        path = os.path.join(tmp_dir, "events.xlsx")
-        _create_excel(path, SAMPLE_DATA["install_events"])
-        is_valid, messages = validate_upload(path, "install_events")
-        assert is_valid
-
-    def test_invalid_event_type(self, tmp_dir):
-        path = os.path.join(tmp_dir, "events.xlsx")
-        data = [{"dealer_id": "DLR001", "event_type": "upgrade", "event_date": "2025-01-01"}]
+    def test_dash_in_numeric_column(self, tmp_dir):
+        """'-' is a valid placeholder in numeric columns and should not cause errors."""
+        path = os.path.join(tmp_dir, "test.xlsx")
+        data = [{
+            "Account Sf ID": "001", "Name of the Dealer": "Test", "Status": "Installed",
+            "Order quantity (total)": "-", "Quantity (via. app.)": "-",
+        }]
         _create_excel(path, data)
-        is_valid, messages = validate_upload(path, "install_events")
-        assert not is_valid
-        assert any("event_type" in m for m in messages)
-
-
-class TestValidateUsageMetrics:
-    def test_valid_usage_metrics(self, tmp_dir):
-        path = os.path.join(tmp_dir, "usage.xlsx")
-        _create_excel(path, SAMPLE_DATA["usage_metrics"])
-        is_valid, messages = validate_upload(path, "usage_metrics")
+        is_valid, messages = validate_upload(path)
         assert is_valid
 
 
 class TestEdgeCases:
     def test_file_not_found(self):
-        is_valid, messages = validate_upload("/nonexistent/file.xlsx", "dealers")
+        is_valid, messages = validate_upload("/nonexistent/file.xlsx")
         assert not is_valid
         assert any("not found" in m.lower() for m in messages)
-
-    def test_unknown_dataset_type(self, tmp_dir):
-        path = os.path.join(tmp_dir, "test.xlsx")
-        _create_excel(path, [{"a": 1}])
-        is_valid, messages = validate_upload(path, "unknown_type")
-        assert not is_valid
 
     def test_empty_file(self, tmp_dir):
         path = os.path.join(tmp_dir, "empty.xlsx")
         pd.DataFrame().to_excel(path, index=False, engine="openpyxl")
-        is_valid, messages = validate_upload(path, "dealers")
+        is_valid, messages = validate_upload(path)
         assert not is_valid
         assert any("empty" in m.lower() for m in messages)
-
-
-class TestNormalizeColumns:
-    def test_normalize(self):
-        df = pd.DataFrame(columns=["Dealer ID", " Event Type ", "APP_VERSION"])
-        df = normalize_columns(df)
-        assert list(df.columns) == ["dealer_id", "event_type", "app_version"]

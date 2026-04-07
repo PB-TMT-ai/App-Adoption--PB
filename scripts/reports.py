@@ -3,65 +3,55 @@ Generate adoption report Excel workbooks from master CSV data.
 """
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pandas as pd
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, numbers
+from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
-from scripts.config import (
-    DEALERS_CSV, INSTALL_EVENTS_CSV, USAGE_METRICS_CSV,
-    REPORT_DIR, INACTIVE_DAYS, AT_RISK_DAYS,
-    ENGAGEMENT_HIGH, ENGAGEMENT_MEDIUM,
-)
+from scripts.config import APP_ADOPTION_CSV, REPORT_DIR
 
 
 def _load_data():
-    """Load all master CSV files into DataFrames."""
-    dealers = pd.DataFrame()
-    events = pd.DataFrame()
-    usage = pd.DataFrame()
+    """Load the master CSV file into a DataFrame."""
+    if not os.path.exists(APP_ADOPTION_CSV) or os.path.getsize(APP_ADOPTION_CSV) == 0:
+        return pd.DataFrame()
 
-    if os.path.exists(DEALERS_CSV) and os.path.getsize(DEALERS_CSV) > 0:
-        dealers = pd.read_csv(DEALERS_CSV, dtype=str)
-        if "onboarded_date" in dealers.columns:
-            dealers["onboarded_date"] = pd.to_datetime(dealers["onboarded_date"], errors="coerce")
+    df = pd.read_csv(APP_ADOPTION_CSV, dtype=str)
 
-    if os.path.exists(INSTALL_EVENTS_CSV) and os.path.getsize(INSTALL_EVENTS_CSV) > 0:
-        events = pd.read_csv(INSTALL_EVENTS_CSV, dtype=str)
-        events["event_date"] = pd.to_datetime(events["event_date"], errors="coerce")
+    # Parse numeric columns
+    int_cols = ["# orders (total)", "# orders (via. app.)"]
+    for col in int_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
-    if os.path.exists(USAGE_METRICS_CSV) and os.path.getsize(USAGE_METRICS_CSV) > 0:
-        usage = pd.read_csv(USAGE_METRICS_CSV)
-        for col in ["period_start", "period_end", "last_active_date"]:
-            if col in usage.columns:
-                usage[col] = pd.to_datetime(usage[col], errors="coerce")
-        for col in ["login_count", "sessions_count", "actions_performed"]:
-            if col in usage.columns:
-                usage[col] = pd.to_numeric(usage[col], errors="coerce").fillna(0).astype(int)
-        for col in ["avg_session_minutes", "engagement_score"]:
-            if col in usage.columns:
-                usage[col] = pd.to_numeric(usage[col], errors="coerce")
+    numeric_cols = ["Order quantity (total)", "Quantity (via. app.)"]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col].astype(str).str.strip().replace("-", "0"), errors="coerce").fillna(0)
 
-    return dealers, events, usage
+    float_cols = ["% orders via. app.", "% order quantity (via. app.)"]
+    for col in float_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
 
 
 def _style_header(ws):
-    """Apply header styling to the first row of a worksheet."""
+    """Apply header styling to the first row."""
     header_font = Font(bold=True, color="FFFFFF", size=11)
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-
     for cell in ws[1]:
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", wrap_text=True)
-
     ws.freeze_panes = "A2"
 
 
 def _auto_width(ws):
-    """Auto-fit column widths based on content."""
+    """Auto-fit column widths."""
     for col_idx, col_cells in enumerate(ws.columns, 1):
         max_len = 0
         for cell in col_cells:
@@ -70,41 +60,15 @@ def _auto_width(ws):
                 max_len = max(max_len, len(val))
             except Exception:
                 pass
-        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 3, 40)
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 3, 45)
 
 
-def _get_dealer_install_status(events):
-    """
-    Determine current install status for each dealer based on events.
-
-    Returns DataFrame with: dealer_id, current_status, install_date, app_version
-    """
-    if events.empty:
-        return pd.DataFrame(columns=["dealer_id", "current_status", "install_date", "app_version"])
-
-    # Sort by date, take the latest event per dealer
-    sorted_events = events.sort_values("event_date")
-    latest = sorted_events.groupby("dealer_id").last().reset_index()
-
-    result = latest[["dealer_id"]].copy()
-    result["current_status"] = latest["event_type"].apply(
-        lambda x: "installed" if str(x).lower() == "install" else "uninstalled"
-    )
-    result["install_date"] = latest["event_date"]
-    result["app_version"] = latest.get("app_version", "")
-
-    return result
-
-
-def _engagement_tier(score):
-    """Return engagement tier label based on score."""
-    if pd.isna(score):
-        return "N/A"
-    if score >= ENGAGEMENT_HIGH:
-        return "High"
-    if score >= ENGAGEMENT_MEDIUM:
-        return "Medium"
-    return "Low"
+def _add_metric_rows(ws, metrics):
+    """Add label-value metric rows with bold labels."""
+    bold = Font(bold=True, size=11)
+    for label, value in metrics:
+        ws.append([label, value])
+        ws.cell(row=ws.max_row, column=1).font = bold
 
 
 def generate_reports():
@@ -114,288 +78,247 @@ def generate_reports():
     Returns:
         Path to the generated report file.
     """
-    dealers, events, usage = _load_data()
-    today = datetime.now().date()
+    df = _load_data()
+    if df.empty:
+        raise ValueError("No data found. Please ingest a data file first.")
 
+    today = datetime.now().strftime("%Y-%m-%d")
     os.makedirs(REPORT_DIR, exist_ok=True)
-    output_path = os.path.join(REPORT_DIR, f"adoption_report_{today.isoformat()}.xlsx")
+    output_path = os.path.join(REPORT_DIR, f"adoption_report_{today}.xlsx")
+
+    total = len(df)
+    status_counts = df["Status"].value_counts()
 
     wb = Workbook()
 
     # ── Sheet 1: Summary ──
-    ws_summary = wb.active
-    ws_summary.title = "Summary"
+    ws = wb.active
+    ws.title = "Summary"
 
-    total_dealers = len(dealers)
-    install_status = _get_dealer_install_status(events)
-    adopted = len(install_status[install_status["current_status"] == "installed"]) if not install_status.empty else 0
-    uninstalled = len(install_status[install_status["current_status"] == "uninstalled"]) if not install_status.empty else 0
-    ever_installed = len(install_status) if not install_status.empty else 0
-    adoption_rate = (ever_installed / total_dealers * 100) if total_dealers > 0 else 0
+    ws.append(["Metric", "Value"])
 
-    # Active/inactive from usage data
-    active_count = 0
-    inactive_count = 0
-    if not usage.empty and "last_active_date" in usage.columns:
-        latest_usage = usage.sort_values("period_end").groupby("dealer_id").last().reset_index()
-        cutoff = pd.Timestamp(today - timedelta(days=INACTIVE_DAYS))
-        active_ids = latest_usage[latest_usage["last_active_date"] >= cutoff]["dealer_id"]
-        active_count = len(active_ids)
-        # Inactive = installed but not active
-        installed_ids = set(install_status[install_status["current_status"] == "installed"]["dealer_id"])
-        inactive_count = len(installed_ids - set(active_ids))
+    installed = int(status_counts.get("Installed", 0))
+    not_installed = int(status_counts.get("Not Installed", 0))
+    uninstalled = int(status_counts.get("Uninstalled", 0))
+    tech_issue = int(status_counts.get("Tech Issue", 0))
+    not_working = int(status_counts.get("Not Working", 0))
+    adoption_rate = round(installed / total * 100, 1) if total > 0 else 0
+    ever_adopted = installed + uninstalled + tech_issue + not_working
+    ever_adopted_rate = round(ever_adopted / total * 100, 1) if total > 0 else 0
 
-    metrics = [
-        ("Metric", "Value"),
-        ("Report Date", str(today)),
-        ("Total Dealers", total_dealers),
-        ("Ever Installed", ever_installed),
-        ("Currently Installed", adopted),
-        ("Uninstalled (Churned)", uninstalled),
-        ("Never Installed", total_dealers - ever_installed),
-        ("Adoption Rate (%)", round(adoption_rate, 1)),
-        ("Active (last 30 days)", active_count),
-        ("Inactive (installed, no activity 30+ days)", inactive_count),
-    ]
-    for row in metrics:
-        ws_summary.append(row)
+    _add_metric_rows(ws, [
+        ("Report Date", today),
+        ("", ""),
+        ("── Dealer Counts ──", ""),
+        ("Total Dealers", total),
+        ("Installed", installed),
+        ("Not Installed", not_installed),
+        ("Uninstalled", uninstalled),
+        ("Tech Issue", tech_issue),
+        ("Not Working", not_working),
+        ("", ""),
+        ("── Adoption Rates ──", ""),
+        ("Currently Installed (%)", f"{adoption_rate}%"),
+        ("Ever Adopted (%)", f"{ever_adopted_rate}%"),
+        ("", ""),
+        ("── Order Data ──", ""),
+        ("Dealers with Orders via App",
+         int((df["# orders (via. app.)"] > 0).sum()) if "# orders (via. app.)" in df.columns else "N/A"),
+        ("Total Orders (all channels)",
+         int(df["# orders (total)"].sum()) if "# orders (total)" in df.columns else "N/A"),
+        ("Total Orders via App",
+         int(df["# orders (via. app.)"].sum()) if "# orders (via. app.)" in df.columns else "N/A"),
+    ])
 
-    _style_header(ws_summary)
-    _auto_width(ws_summary)
+    # Zone breakdown in summary
+    ws.append(["", ""])
+    ws.append(["── Zone Breakdown ──", ""])
+    ws.cell(row=ws.max_row, column=1).font = Font(bold=True, size=11)
+    ws.append(["Zone", "Total", "Installed", "Not Installed", "Uninstalled", "Tech Issue / Not Working", "Adoption Rate (%)"])
+    ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
 
-    # ── Sheet 2: Adoption Trend ──
-    ws_trend = wb.create_sheet("Adoption Trend")
+    if "Zone" in df.columns:
+        for zone in sorted(df["Zone"].dropna().unique()):
+            z = df[df["Zone"] == zone]
+            z_total = len(z)
+            z_installed = int((z["Status"] == "Installed").sum())
+            z_not_installed = int((z["Status"] == "Not Installed").sum())
+            z_uninstalled = int((z["Status"] == "Uninstalled").sum())
+            z_other = int(z["Status"].isin(["Tech Issue", "Not Working"]).sum())
+            z_rate = round(z_installed / z_total * 100, 1) if z_total > 0 else 0
+            ws.append([zone, z_total, z_installed, z_not_installed, z_uninstalled, z_other, f"{z_rate}%"])
 
-    if not events.empty:
-        events_copy = events.copy()
-        events_copy["month"] = events_copy["event_date"].dt.to_period("M")
-        monthly = events_copy.groupby(["month", "event_type"]).size().unstack(fill_value=0).reset_index()
-        monthly.columns = [str(c) for c in monthly.columns]
+    _style_header(ws)
+    _auto_width(ws)
 
-        if "install" not in monthly.columns:
-            monthly["install"] = 0
-        if "uninstall" not in monthly.columns:
-            monthly["uninstall"] = 0
+    # ── Sheet 2: Zone-wise Adoption ──
+    ws_zone = wb.create_sheet("Zone-wise Adoption")
+    ws_zone.append(["Zone", "State", "Total Dealers", "Installed", "Not Installed", "Uninstalled",
+                     "Tech Issue", "Not Working", "Adoption Rate (%)"])
 
-        monthly = monthly.sort_values("month")
-        monthly["cumulative_installs"] = monthly["install"].cumsum()
-        monthly["cumulative_uninstalls"] = monthly["uninstall"].cumsum()
-        monthly["net_installed"] = monthly["cumulative_installs"] - monthly["cumulative_uninstalls"]
-        monthly["adoption_rate_pct"] = (
-            (monthly["net_installed"] / total_dealers * 100).round(1) if total_dealers > 0 else 0
-        )
+    if "Zone" in df.columns and "State" in df.columns:
+        zone_state = df.groupby(["Zone", "State"]).agg(
+            total=("Account Sf ID", "count"),
+            installed=("Status", lambda x: (x == "Installed").sum()),
+            not_installed=("Status", lambda x: (x == "Not Installed").sum()),
+            uninstalled=("Status", lambda x: (x == "Uninstalled").sum()),
+            tech_issue=("Status", lambda x: (x == "Tech Issue").sum()),
+            not_working=("Status", lambda x: (x == "Not Working").sum()),
+        ).reset_index()
 
-        ws_trend.append(["Month", "New Installs", "Uninstalls", "Cumulative Installs", "Net Installed", "Adoption Rate (%)"])
-        for _, row in monthly.iterrows():
-            ws_trend.append([
-                str(row["month"]),
-                int(row["install"]),
-                int(row["uninstall"]),
-                int(row["cumulative_installs"]),
-                int(row["net_installed"]),
-                float(row["adoption_rate_pct"]),
+        zone_state["rate"] = (zone_state["installed"] / zone_state["total"] * 100).round(1)
+        zone_state = zone_state.sort_values(["Zone", "rate"], ascending=[True, False])
+
+        for _, row in zone_state.iterrows():
+            ws_zone.append([
+                row["Zone"], row["State"], int(row["total"]),
+                int(row["installed"]), int(row["not_installed"]), int(row["uninstalled"]),
+                int(row["tech_issue"]), int(row["not_working"]), f"{row['rate']}%",
             ])
-    else:
-        ws_trend.append(["Month", "New Installs", "Uninstalls", "Cumulative Installs", "Net Installed", "Adoption Rate (%)"])
-        ws_trend.append(["No data available", "", "", "", "", ""])
 
-    _style_header(ws_trend)
-    _auto_width(ws_trend)
+    _style_header(ws_zone)
+    _auto_width(ws_zone)
 
-    # ── Sheet 3: Dealer Detail ──
+    # ── Sheet 3: Distributor-wise Adoption ──
+    ws_dist = wb.create_sheet("Distributor-wise Adoption")
+    ws_dist.append(["Distributor Name", "Total Dealers", "Installed", "Not Installed", "Uninstalled",
+                     "Tech Issue / Not Working", "Adoption Rate (%)"])
+
+    if "Distributor Name" in df.columns:
+        dist = df.groupby("Distributor Name").agg(
+            total=("Account Sf ID", "count"),
+            installed=("Status", lambda x: (x == "Installed").sum()),
+            not_installed=("Status", lambda x: (x == "Not Installed").sum()),
+            uninstalled=("Status", lambda x: (x == "Uninstalled").sum()),
+            other=("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
+        ).reset_index()
+
+        dist["rate"] = (dist["installed"] / dist["total"] * 100).round(1)
+        dist = dist.sort_values("rate", ascending=False)
+
+        for _, row in dist.iterrows():
+            ws_dist.append([
+                row["Distributor Name"], int(row["total"]),
+                int(row["installed"]), int(row["not_installed"]), int(row["uninstalled"]),
+                int(row["other"]), f"{row['rate']}%",
+            ])
+
+    _style_header(ws_dist)
+    _auto_width(ws_dist)
+
+    # ── Sheet 4: Dealer Detail ──
     ws_detail = wb.create_sheet("Dealer Detail")
 
-    detail_headers = [
-        "Dealer ID", "Dealer Name", "Dealer Group", "Region",
-        "Install Status", "Install Date", "App Version",
-        "Last Active Date", "Total Logins", "Avg Engagement Score",
-        "Days Since Last Activity", "Status Label"
+    detail_cols = [
+        "Account Sf ID", "Name of the Dealer", "State", "Zone",
+        "Distributor Name", "Account Owner As per SF", "Mobile No.",
+        "# orders (total)", "# orders (via. app.)", "Status",
     ]
-    ws_detail.append(detail_headers)
+    available_cols = [c for c in detail_cols if c in df.columns]
+    ws_detail.append(available_cols)
 
-    if not dealers.empty:
-        detail_df = dealers[["dealer_id", "dealer_name"]].copy()
-        if "dealer_group" in dealers.columns:
-            detail_df["dealer_group"] = dealers["dealer_group"]
-        else:
-            detail_df["dealer_group"] = ""
-        if "region" in dealers.columns:
-            detail_df["region"] = dealers["region"]
-        else:
-            detail_df["region"] = ""
+    # Sort: Installed first, then Uninstalled, Tech Issue, Not Working, Not Installed
+    status_order = {"Installed": 0, "Uninstalled": 1, "Tech Issue": 2, "Not Working": 3, "Not Installed": 4}
+    sorted_df = df.copy()
+    sorted_df["_sort"] = sorted_df["Status"].map(status_order).fillna(5)
+    sorted_df = sorted_df.sort_values(["_sort", "Name of the Dealer"])
 
-        # Merge install status
-        if not install_status.empty:
-            detail_df = detail_df.merge(
-                install_status[["dealer_id", "current_status", "install_date", "app_version"]],
-                on="dealer_id", how="left"
-            )
-        else:
-            detail_df["current_status"] = "not installed"
-            detail_df["install_date"] = None
-            detail_df["app_version"] = ""
-
-        detail_df["current_status"] = detail_df["current_status"].fillna("not installed")
-
-        # Merge usage data
-        if not usage.empty:
-            latest_usage = usage.sort_values("period_end").groupby("dealer_id").last().reset_index()
-            agg_usage = usage.groupby("dealer_id").agg(
-                total_logins=("login_count", "sum"),
-                avg_engagement=("engagement_score", "mean"),
-            ).reset_index()
-
-            detail_df = detail_df.merge(
-                latest_usage[["dealer_id", "last_active_date"]],
-                on="dealer_id", how="left"
-            )
-            detail_df = detail_df.merge(agg_usage, on="dealer_id", how="left")
-        else:
-            detail_df["last_active_date"] = None
-            detail_df["total_logins"] = 0
-            detail_df["avg_engagement"] = None
-
-        # Compute days since last activity
-        detail_df["days_since"] = detail_df["last_active_date"].apply(
-            lambda x: (pd.Timestamp(today) - x).days if pd.notna(x) else None
-        )
-
-        # Status label
-        def status_label(row):
-            if row["current_status"] == "uninstalled":
-                return "Churned"
-            if row["current_status"] == "not installed":
-                return "Not Installed"
-            if pd.isna(row.get("days_since")) or row.get("days_since") is None:
-                return "No Usage Data"
-            if row["days_since"] > INACTIVE_DAYS:
-                return "Inactive"
-            return "Active"
-
-        detail_df["status_label"] = detail_df.apply(status_label, axis=1)
-
-        # Sort: Active first, then Inactive, Churned, Not Installed
-        status_order = {"Active": 0, "Inactive": 1, "No Usage Data": 2, "Churned": 3, "Not Installed": 4}
-        detail_df["sort_key"] = detail_df["status_label"].map(status_order)
-        detail_df = detail_df.sort_values(["sort_key", "dealer_name"]).drop(columns=["sort_key"])
-
-        for _, row in detail_df.iterrows():
-            ws_detail.append([
-                str(row.get("dealer_id", "")),
-                str(row.get("dealer_name", "")),
-                str(row.get("dealer_group", "")),
-                str(row.get("region", "")),
-                str(row.get("current_status", "")),
-                row.get("install_date", "").strftime("%Y-%m-%d") if pd.notna(row.get("install_date")) else "",
-                str(row.get("app_version", "")),
-                row.get("last_active_date", "").strftime("%Y-%m-%d") if pd.notna(row.get("last_active_date")) else "",
-                int(row.get("total_logins", 0)) if pd.notna(row.get("total_logins")) else 0,
-                round(float(row.get("avg_engagement", 0)), 1) if pd.notna(row.get("avg_engagement")) else "",
-                int(row.get("days_since", 0)) if pd.notna(row.get("days_since")) else "",
-                str(row.get("status_label", "")),
-            ])
+    for _, row in sorted_df.iterrows():
+        ws_detail.append([_cell_value(row.get(c)) for c in available_cols])
 
     _style_header(ws_detail)
     _auto_width(ws_detail)
 
-    # ── Sheet 4: Engagement Breakdown ──
-    ws_engage = wb.create_sheet("Engagement Breakdown")
+    # ── Sheet 5: App Usage (Orders) ──
+    ws_orders = wb.create_sheet("App Usage (Orders)")
+    ws_orders.append([
+        "Account Sf ID", "Name of the Dealer", "Zone", "Distributor Name",
+        "# Orders (Total)", "# Orders (via App)", "% Orders via App",
+        "Order Qty (Total)", "Qty (via App)", "% Qty via App", "Status",
+    ])
 
-    engage_headers = [
-        "Dealer ID", "Dealer Name", "Total Sessions", "Total Actions",
-        "Avg Session (min)", "Engagement Score", "Engagement Tier"
-    ]
-    ws_engage.append(engage_headers)
-
-    if not usage.empty and not dealers.empty:
-        engage_df = usage.groupby("dealer_id").agg(
-            total_sessions=("sessions_count", "sum"),
-            total_actions=("actions_performed", "sum"),
-            avg_session_min=("avg_session_minutes", "mean"),
-            avg_engagement=("engagement_score", "mean"),
-        ).reset_index()
-
-        engage_df = engage_df.merge(
-            dealers[["dealer_id", "dealer_name"]], on="dealer_id", how="left"
-        )
-        engage_df["tier"] = engage_df["avg_engagement"].apply(_engagement_tier)
-        engage_df = engage_df.sort_values("avg_engagement", ascending=False)
-
-        for _, row in engage_df.iterrows():
-            ws_engage.append([
-                str(row["dealer_id"]),
-                str(row.get("dealer_name", "")),
-                int(row["total_sessions"]),
-                int(row["total_actions"]),
-                round(float(row["avg_session_min"]), 1) if pd.notna(row["avg_session_min"]) else "",
-                round(float(row["avg_engagement"]), 1) if pd.notna(row["avg_engagement"]) else "",
-                str(row["tier"]),
+    # Show dealers with any orders via app, sorted by orders descending
+    if "# orders (via. app.)" in df.columns:
+        app_users = df[df["# orders (via. app.)"] > 0].sort_values("# orders (via. app.)", ascending=False)
+        for _, row in app_users.iterrows():
+            ws_orders.append([
+                _cell_value(row.get("Account Sf ID")),
+                _cell_value(row.get("Name of the Dealer")),
+                _cell_value(row.get("Zone")),
+                _cell_value(row.get("Distributor Name")),
+                _cell_value(row.get("# orders (total)")),
+                _cell_value(row.get("# orders (via. app.)")),
+                _pct_value(row.get("% orders via. app.")),
+                _cell_value(row.get("Order quantity (total)")),
+                _cell_value(row.get("Quantity (via. app.)")),
+                _pct_value(row.get("% order quantity (via. app.)")),
+                _cell_value(row.get("Status")),
             ])
 
-    _style_header(ws_engage)
-    _auto_width(ws_engage)
+        if app_users.empty:
+            ws_orders.append(["No dealers have placed orders via the app yet."] + [""] * 10)
 
-    # ── Sheet 5: At Risk ──
-    ws_risk = wb.create_sheet("At Risk")
+    _style_header(ws_orders)
+    _auto_width(ws_orders)
 
-    risk_headers = [
-        "Dealer ID", "Dealer Name", "Region", "Last Active Date",
-        "Days Since Activity", "Engagement Score", "Risk Reason"
-    ]
-    ws_risk.append(risk_headers)
+    # ── Sheet 6: At Risk / Action Needed ──
+    ws_risk = wb.create_sheet("At Risk - Action Needed")
+    ws_risk.append([
+        "Account Sf ID", "Name of the Dealer", "State", "Zone",
+        "Distributor Name", "Account Owner As per SF", "Mobile No.",
+        "Status", "Action Needed",
+    ])
 
-    if not dealers.empty and not install_status.empty:
-        installed_ids = set(install_status[install_status["current_status"] == "installed"]["dealer_id"])
-        at_risk_dealers = dealers[dealers["dealer_id"].isin(installed_ids)].copy()
+    risk_statuses = {"Uninstalled": "Re-engage: app was uninstalled",
+                     "Tech Issue": "Resolve technical issue",
+                     "Not Working": "Fix: app not working"}
 
-        if not usage.empty:
-            latest_usage = usage.sort_values("period_end").groupby("dealer_id").last().reset_index()
-            at_risk_dealers = at_risk_dealers.merge(
-                latest_usage[["dealer_id", "last_active_date", "engagement_score"]],
-                on="dealer_id", how="left"
-            )
-        else:
-            at_risk_dealers["last_active_date"] = None
-            at_risk_dealers["engagement_score"] = None
+    risk_df = df[df["Status"].isin(risk_statuses.keys())].copy()
+    risk_df["Action Needed"] = risk_df["Status"].map(risk_statuses)
+    risk_df = risk_df.sort_values("Status")
 
-        at_risk_dealers["days_since"] = at_risk_dealers["last_active_date"].apply(
-            lambda x: (pd.Timestamp(today) - x).days if pd.notna(x) else None
-        )
+    for _, row in risk_df.iterrows():
+        ws_risk.append([
+            _cell_value(row.get("Account Sf ID")),
+            _cell_value(row.get("Name of the Dealer")),
+            _cell_value(row.get("State")),
+            _cell_value(row.get("Zone")),
+            _cell_value(row.get("Distributor Name")),
+            _cell_value(row.get("Account Owner As per SF")),
+            _cell_value(row.get("Mobile No.")),
+            _cell_value(row.get("Status")),
+            _cell_value(row.get("Action Needed")),
+        ])
 
-        # Filter: no activity in AT_RISK_DAYS+ or low engagement
-        risk_rows = at_risk_dealers[
-            (at_risk_dealers["days_since"].isna()) |
-            (at_risk_dealers["days_since"] > AT_RISK_DAYS) |
-            (at_risk_dealers["engagement_score"] < ENGAGEMENT_MEDIUM)
-        ].copy()
-
-        def risk_reason(row):
-            reasons = []
-            if pd.isna(row.get("days_since")):
-                reasons.append("No usage data")
-            elif row["days_since"] > AT_RISK_DAYS:
-                reasons.append(f"Inactive {int(row['days_since'])} days")
-            if pd.notna(row.get("engagement_score")) and row["engagement_score"] < ENGAGEMENT_MEDIUM:
-                reasons.append(f"Low engagement ({row['engagement_score']:.0f})")
-            return "; ".join(reasons) if reasons else "At risk"
-
-        risk_rows["risk_reason"] = risk_rows.apply(risk_reason, axis=1)
-        risk_rows = risk_rows.sort_values("days_since", ascending=False, na_position="first")
-
-        for _, row in risk_rows.iterrows():
-            ws_risk.append([
-                str(row["dealer_id"]),
-                str(row.get("dealer_name", "")),
-                str(row.get("region", "")),
-                row["last_active_date"].strftime("%Y-%m-%d") if pd.notna(row.get("last_active_date")) else "Never",
-                int(row["days_since"]) if pd.notna(row.get("days_since")) else "N/A",
-                round(float(row["engagement_score"]), 1) if pd.notna(row.get("engagement_score")) else "N/A",
-                str(row["risk_reason"]),
-            ])
+    # Color-code by status
+    status_colors = {
+        "Not Working": PatternFill(start_color="FF9999", end_color="FF9999", fill_type="solid"),
+        "Tech Issue": PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid"),
+        "Uninstalled": PatternFill(start_color="FFFFCC", end_color="FFFFCC", fill_type="solid"),
+    }
+    status_col_idx = 8  # Column H = Status
+    for row_idx in range(2, ws_risk.max_row + 1):
+        status_val = ws_risk.cell(row=row_idx, column=status_col_idx).value
+        if status_val in status_colors:
+            for col_idx in range(1, 10):
+                ws_risk.cell(row=row_idx, column=col_idx).fill = status_colors[status_val]
 
     _style_header(ws_risk)
     _auto_width(ws_risk)
 
-    # Save workbook
     wb.save(output_path)
     return output_path
+
+
+def _cell_value(val):
+    """Convert a value for Excel output."""
+    if pd.isna(val):
+        return ""
+    return val
+
+
+def _pct_value(val):
+    """Format a percentage value."""
+    if pd.isna(val):
+        return ""
+    return f"{float(val):.1f}%"
