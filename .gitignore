@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Data files (user-generated, not tracked)
+data/*.csv
+uploads/*.xlsx
+uploads/processed/*.xlsx
+reports/*.xlsx
+
+# Keep directory structure
+!.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
