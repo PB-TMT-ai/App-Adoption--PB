@@ -179,7 +179,45 @@ def generate_reports():
     _style_header(ws_zone)
     _auto_width(ws_zone)
 
-    # ── Sheet 3: Distributor-wise Adoption ──
+    # ── Sheet 3: State-wise Adoption ──
+    ws_state = wb.create_sheet("State-wise Adoption")
+    ws_state.append(["State", "Zone", "No. of Distributors", "No. of Dealers",
+                     "Installed", "Not Installed", "Uninstalled", "Tech Issue / Not Working", "Adoption Rate (%)"])
+
+    if "State" in df.columns:
+        state_agg_dict = {
+            "total": ("Account Sf ID", "count"),
+            "installed": ("Status", lambda x: (x == "Installed").sum()),
+            "not_installed": ("Status", lambda x: (x == "Not Installed").sum()),
+            "uninstalled": ("Status", lambda x: (x == "Uninstalled").sum()),
+            "other": ("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
+        }
+        if "Zone" in df.columns:
+            state_agg_dict["zone"] = ("Zone", "first")
+        if "Distributor Name" in df.columns:
+            state_agg_dict["distributors"] = ("Distributor Name", "nunique")
+
+        state_data = df.groupby("State").agg(**state_agg_dict).reset_index()
+        state_data["rate"] = (state_data["installed"] / state_data["total"] * 100).round(1)
+        state_data = state_data.sort_values("rate", ascending=False)
+
+        for _, row in state_data.iterrows():
+            ws_state.append([
+                row["State"],
+                row.get("zone", ""),
+                int(row.get("distributors", 0)),
+                int(row["total"]),
+                int(row["installed"]),
+                int(row["not_installed"]),
+                int(row["uninstalled"]),
+                int(row["other"]),
+                f"{row['rate']}%",
+            ])
+
+    _style_header(ws_state)
+    _auto_width(ws_state)
+
+    # ── Sheet 4: Distributor-wise Adoption ──
     ws_dist = wb.create_sheet("Distributor-wise Adoption")
     ws_dist.append(["Distributor Name", "Total Dealers", "Installed", "Not Installed", "Uninstalled",
                      "Tech Issue / Not Working", "Adoption Rate (%)"])

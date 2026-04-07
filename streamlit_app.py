@@ -363,9 +363,31 @@ def generate_excel_report(df):
     style_header(ws2)
     auto_width(ws2)
 
-    # Sheet 3: Distributor-wise
-    ws3 = wb.create_sheet("Distributor-wise Adoption")
-    ws3.append(["Distributor Name", "Total", "Installed", "Not Installed", "Uninstalled",
+    # Sheet 3: State-wise
+    ws3 = wb.create_sheet("State-wise Adoption")
+    ws3.append(["State", "Zone", "No. of Distributors", "No. of Dealers",
+                "Installed", "Not Installed", "Uninstalled", "Tech Issue / NW", "Adoption Rate (%)"])
+    if "State" in df.columns:
+        state_agg = df.groupby("State").agg(
+            zone=("Zone", "first") if "Zone" in df.columns else ("State", "count"),
+            distributors=("Distributor Name", "nunique") if "Distributor Name" in df.columns else ("State", "count"),
+            total=("Account Sf ID", "count"),
+            inst=("Status", lambda x: (x == "Installed").sum()),
+            ni=("Status", lambda x: (x == "Not Installed").sum()),
+            un=("Status", lambda x: (x == "Uninstalled").sum()),
+            oth=("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
+        ).reset_index()
+        state_agg["rate"] = (state_agg["inst"] / state_agg["total"] * 100).round(1)
+        state_agg = state_agg.sort_values("rate", ascending=False)
+        for _, r in state_agg.iterrows():
+            ws3.append([r["State"], r["zone"], int(r["distributors"]), int(r["total"]),
+                        int(r["inst"]), int(r["ni"]), int(r["un"]), int(r["oth"]), f"{r['rate']}%"])
+    style_header(ws3)
+    auto_width(ws3)
+
+    # Sheet 4: Distributor-wise
+    ws4 = wb.create_sheet("Distributor-wise Adoption")
+    ws4.append(["Distributor Name", "Total", "Installed", "Not Installed", "Uninstalled",
                  "Other", "Adoption Rate (%)"])
     if "Distributor Name" in df.columns:
         dist = df.groupby("Distributor Name").agg(
@@ -377,45 +399,45 @@ def generate_excel_report(df):
         ).reset_index()
         dist["rate"] = (dist["inst"] / dist["total"] * 100).round(1)
         for _, r in dist.sort_values("rate", ascending=False).iterrows():
-            ws3.append([r["Distributor Name"], int(r["total"]), int(r["inst"]),
+            ws4.append([r["Distributor Name"], int(r["total"]), int(r["inst"]),
                         int(r["ni"]), int(r["un"]), int(r["oth"]), f"{r['rate']}%"])
-    style_header(ws3)
-    auto_width(ws3)
+    style_header(ws4)
+    auto_width(ws4)
 
-    # Sheet 4: Dealer Detail
-    ws4 = wb.create_sheet("Dealer Detail")
+    # Sheet 5: Dealer Detail
+    ws5 = wb.create_sheet("Dealer Detail")
     detail_cols = ["Account Sf ID", "Name of the Dealer", "State", "Zone",
                    "Distributor Name", "Account Owner As per SF", "Mobile No.",
                    "# orders (total)", "# orders (via. app.)", "Status"]
     avail = [c for c in detail_cols if c in df.columns]
-    ws4.append(avail)
+    ws5.append(avail)
     status_order = {"Installed": 0, "Uninstalled": 1, "Tech Issue": 2, "Not Working": 3, "Not Installed": 4}
     sdf = df.copy()
     sdf["_s"] = sdf["Status"].map(status_order).fillna(5)
     sdf = sdf.sort_values(["_s", "Name of the Dealer"])
     for _, row in sdf.iterrows():
-        ws4.append([row.get(c, "") if pd.notna(row.get(c)) else "" for c in avail])
-    style_header(ws4)
-    auto_width(ws4)
+        ws5.append([row.get(c, "") if pd.notna(row.get(c)) else "" for c in avail])
+    style_header(ws5)
+    auto_width(ws5)
 
-    # Sheet 5: App Usage
-    ws5 = wb.create_sheet("App Usage (Orders)")
-    ws5.append(["Account Sf ID", "Name of the Dealer", "Zone", "Distributor Name",
+    # Sheet 6: App Usage
+    ws6 = wb.create_sheet("App Usage (Orders)")
+    ws6.append(["Account Sf ID", "Name of the Dealer", "Zone", "Distributor Name",
                 "# Orders (Total)", "# Orders (via App)", "% Orders via App", "Status"])
     if "# orders (via. app.)" in df.columns:
         app_u = df[df["# orders (via. app.)"] > 0].sort_values("# orders (via. app.)", ascending=False)
         for _, r in app_u.iterrows():
             pct = f"{r['% orders via. app.']:.1f}%" if pd.notna(r.get("% orders via. app.")) else ""
-            ws5.append([r.get("Account Sf ID", ""), r.get("Name of the Dealer", ""),
+            ws6.append([r.get("Account Sf ID", ""), r.get("Name of the Dealer", ""),
                         r.get("Zone", ""), r.get("Distributor Name", ""),
                         r.get("# orders (total)", 0), r.get("# orders (via. app.)", 0),
                         pct, r.get("Status", "")])
-    style_header(ws5)
-    auto_width(ws5)
+    style_header(ws6)
+    auto_width(ws6)
 
-    # Sheet 6: At Risk
-    ws6 = wb.create_sheet("At Risk - Action Needed")
-    ws6.append(["Account Sf ID", "Name of the Dealer", "State", "Zone",
+    # Sheet 7: At Risk
+    ws7 = wb.create_sheet("At Risk - Action Needed")
+    ws7.append(["Account Sf ID", "Name of the Dealer", "State", "Zone",
                 "Distributor Name", "Account Owner As per SF", "Mobile No.", "Status", "Action Needed"])
     risk_map = {"Uninstalled": "Re-engage: app was uninstalled",
                 "Tech Issue": "Resolve technical issue", "Not Working": "Dealer not working"}
@@ -428,17 +450,17 @@ def generate_excel_report(df):
         "Uninstalled": PatternFill(start_color="FFFFCC", end_color="FFFFCC", fill_type="solid"),
     }
     for _, r in risk.iterrows():
-        ws6.append([r.get("Account Sf ID", ""), r.get("Name of the Dealer", ""),
+        ws7.append([r.get("Account Sf ID", ""), r.get("Name of the Dealer", ""),
                      r.get("State", ""), r.get("Zone", ""), r.get("Distributor Name", ""),
                      r.get("Account Owner As per SF", ""), r.get("Mobile No.", ""),
                      r.get("Status", ""), r.get("Action Needed", "")])
-    for ri in range(2, ws6.max_row + 1):
-        sv = ws6.cell(row=ri, column=8).value
+    for ri in range(2, ws7.max_row + 1):
+        sv = ws7.cell(row=ri, column=8).value
         if sv in sfills:
             for ci in range(1, 10):
-                ws6.cell(row=ri, column=ci).fill = sfills[sv]
-    style_header(ws6)
-    auto_width(ws6)
+                ws7.cell(row=ri, column=ci).fill = sfills[sv]
+    style_header(ws7)
+    auto_width(ws7)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -614,6 +636,32 @@ with tab_summary:
             .apply(_bold_columns("Zone", "Total", "Adoption %"), axis=0)
         )
         st.dataframe(styled_zone, use_container_width=True, hide_index=True)
+
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+    # State-wise
+    if "State" in filtered_df.columns:
+        st.subheader("State-wise Adoption")
+        state_agg = filtered_df.groupby("State").agg(
+            Zone=("Zone", "first") if "Zone" in filtered_df.columns else ("State", "count"),
+            Distributors=("Distributor Name", "nunique") if "Distributor Name" in filtered_df.columns else ("State", "count"),
+            Total=("Account Sf ID", "count"),
+            Installed=("Status", lambda x: (x == "Installed").sum()),
+            Not_Installed=("Status", lambda x: (x == "Not Installed").sum()),
+            Uninstalled=("Status", lambda x: (x == "Uninstalled").sum()),
+            Other=("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
+        ).reset_index()
+        state_agg["Adoption %"] = (state_agg["Installed"] / state_agg["Total"] * 100).round(1)
+        state_agg = state_agg.sort_values("Adoption %", ascending=False)
+        state_agg.columns = ["State", "Zone", "No. of Distributors", "No. of Dealers",
+                             "Installed", "Not Installed", "Uninstalled", "Tech Issue / NW", "Adoption %"]
+        state_agg["Adoption %"] = state_agg["Adoption %"].apply(lambda x: f"{x}%")
+        styled_state = (
+            state_agg.style
+            .apply(_highlight_adoption_rate, axis=1)
+            .apply(_bold_columns("State", "No. of Dealers", "Adoption %"), axis=0)
+        )
+        st.dataframe(styled_state, use_container_width=True, hide_index=True)
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
