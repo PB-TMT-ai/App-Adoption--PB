@@ -213,11 +213,10 @@ def generate_reports():
 
     # ── Sheet 3: Distributor-level Report ──
     report_headers = [
-        "Distributor Name", "State", "Target # dealers", "# app. installs",
-        "# Tech Issues", "# Pending Installations", "# Not Working",
-        "% app. installs", "# orders by target dealers", "# orders on the app",
-        "% orders (by count)", "Order quantity (MT) by target dealers",
-        "Order qty by dealers with app. installed", "% order vol.",
+        "Distributor", "State", "Target #", "Installs",
+        "Tech Issue", "Pending", "N/W",
+        "% Installs", "Orders (Total)", "Orders (App)",
+        "% Orders", "Qty Total (MT)", "Qty App (MT)", "% Order Vol.",
     ]
     ws_dist = wb.create_sheet("Distributor-level Report")
     ws_dist.append(report_headers)
@@ -256,11 +255,10 @@ def generate_reports():
 
     # ── Sheet 4: State-level Report ──
     state_report_headers = [
-        "State", "Target # dealers", "# app. installs",
-        "# Tech Issues", "# Pending Installations", "# Not Working",
-        "% app. installs", "# orders by target dealers", "# orders on the app",
-        "% orders (by count)", "Order quantity (MT) by target dealers",
-        "Order qty by dealers with app. installed", "% order vol.",
+        "State", "Target #", "Installs",
+        "Tech Issue", "Pending", "N/W",
+        "% Installs", "Orders (Total)", "Orders (App)",
+        "% Orders", "Qty Total (MT)", "Qty App (MT)", "% Order Vol.",
     ]
     ws_state = wb.create_sheet("State-level Report")
     ws_state.append(state_report_headers)

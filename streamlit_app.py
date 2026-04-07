@@ -365,11 +365,10 @@ def generate_excel_report(df):
 
     # Sheet 3: Distributor-level Report
     report_headers = [
-        "Distributor Name", "State", "Target # dealers", "# app. installs",
-        "# Tech Issues", "# Pending Installations", "# Not Working",
-        "% app. installs", "# orders by target dealers", "# orders on the app",
-        "% orders (by count)", "Order quantity (MT) by target dealers",
-        "Order qty by dealers with app. installed", "% order vol.",
+        "Distributor", "State", "Target #", "Installs",
+        "Tech Issue", "Pending", "N/W",
+        "% Installs", "Orders (Total)", "Orders (App)",
+        "% Orders", "Qty Total (MT)", "Qty App (MT)", "% Order Vol.",
     ]
     ws3 = wb.create_sheet("Distributor-level Report")
     ws3.append(report_headers)
@@ -409,11 +408,10 @@ def generate_excel_report(df):
 
     # Sheet 4: State-level Report
     state_report_headers = [
-        "State", "Target # dealers", "# app. installs",
-        "# Tech Issues", "# Pending Installations", "# Not Working",
-        "% app. installs", "# orders by target dealers", "# orders on the app",
-        "% orders (by count)", "Order quantity (MT) by target dealers",
-        "Order qty by dealers with app. installed", "% order vol.",
+        "State", "Target #", "Installs",
+        "Tech Issue", "Pending", "N/W",
+        "% Installs", "Orders (Total)", "Orders (App)",
+        "% Orders", "Qty Total (MT)", "Qty App (MT)", "% Order Vol.",
     ]
     ws4 = wb.create_sheet("State-level Report")
     ws4.append(state_report_headers)
@@ -574,7 +572,7 @@ def _bold_columns(*col_names):
 def _highlight_pct_columns(df_style):
     """Apply cell-level color coding to percentage columns (green/yellow/red)."""
     styles = pd.DataFrame("", index=df_style.index, columns=df_style.columns)
-    pct_cols = ["% app. installs", "% orders (by count)", "% order vol."]
+    pct_cols = ["% Installs", "% Orders", "% Order Vol."]
     for col in pct_cols:
         if col in df_style.columns:
             for idx in df_style.index:
@@ -741,30 +739,30 @@ with tab_summary:
             dist_agg["State"] = ""
 
         dist_display = pd.DataFrame({
-            "Distributor Name": dist_agg["Distributor Name"],
+            "Distributor": dist_agg["Distributor Name"],
             "State": dist_agg["State"],
-            "Target # dealers": dist_agg["target_dealers"],
-            "# app. installs": dist_agg["app_installs"],
-            "# Tech Issues": dist_agg["tech_issues"],
-            "# Pending Installations": dist_agg["pending"],
-            "# Not Working": dist_agg["not_working"],
-            "% app. installs": dist_agg["pct_installs"].apply(lambda x: f"{x}%"),
-            "# orders by target dealers": dist_agg["orders_total"],
-            "# orders on the app": dist_agg["orders_app"],
-            "% orders (by count)": dist_agg["pct_orders"].apply(lambda x: f"{x}%"),
-            "Order quantity (MT) by target dealers": dist_agg["qty_total"].round(0).astype(int),
-            "Order qty by dealers with app. installed": dist_agg["qty_app"].round(0).astype(int),
-            "% order vol.": dist_agg["pct_qty"].apply(lambda x: f"{x}%"),
+            "Target #": dist_agg["target_dealers"],
+            "Installs": dist_agg["app_installs"],
+            "Tech Issue": dist_agg["tech_issues"],
+            "Pending": dist_agg["pending"],
+            "N/W": dist_agg["not_working"],
+            "% Installs": dist_agg["pct_installs"].apply(lambda x: f"{x}%"),
+            "Orders (Total)": dist_agg["orders_total"],
+            "Orders (App)": dist_agg["orders_app"],
+            "% Orders": dist_agg["pct_orders"].apply(lambda x: f"{x}%"),
+            "Qty Total (MT)": dist_agg["qty_total"].round(0).astype(int),
+            "Qty App (MT)": dist_agg["qty_app"].round(0).astype(int),
+            "% Order Vol.": dist_agg["pct_qty"].apply(lambda x: f"{x}%"),
         })
         dist_display = dist_display.sort_values(
-            "% app. installs", key=lambda s: s.str.replace("%", "").astype(float), ascending=False
+            "% Installs", key=lambda s: s.str.replace("%", "").astype(float), ascending=False
         )
 
         styled_dist = (
             dist_display.style
             .apply(_highlight_pct_columns, axis=None)
-            .apply(_bold_columns("Distributor Name", "Target # dealers",
-                                  "% app. installs", "% orders (by count)", "% order vol."), axis=0)
+            .apply(_bold_columns("Distributor", "Target #",
+                                  "% Installs", "% Orders", "% Order Vol."), axis=0)
         )
         st.dataframe(styled_dist, use_container_width=True, hide_index=True, height=400)
 
@@ -777,56 +775,56 @@ with tab_summary:
 
         state_display = pd.DataFrame({
             "State": state_agg["State"],
-            "Target # dealers": state_agg["target_dealers"],
-            "# app. installs": state_agg["app_installs"],
-            "# Tech Issues": state_agg["tech_issues"],
-            "# Pending Installations": state_agg["pending"],
-            "# Not Working": state_agg["not_working"],
-            "% app. installs": state_agg["pct_installs"].apply(lambda x: f"{x}%"),
-            "# orders by target dealers": state_agg["orders_total"],
-            "# orders on the app": state_agg["orders_app"],
-            "% orders (by count)": state_agg["pct_orders"].apply(lambda x: f"{x}%"),
-            "Order quantity (MT) by target dealers": state_agg["qty_total"].round(0).astype(int),
-            "Order qty by dealers with app. installed": state_agg["qty_app"].round(0).astype(int),
-            "% order vol.": state_agg["pct_qty"].apply(lambda x: f"{x}%"),
+            "Target #": state_agg["target_dealers"],
+            "Installs": state_agg["app_installs"],
+            "Tech Issue": state_agg["tech_issues"],
+            "Pending": state_agg["pending"],
+            "N/W": state_agg["not_working"],
+            "% Installs": state_agg["pct_installs"].apply(lambda x: f"{x}%"),
+            "Orders (Total)": state_agg["orders_total"],
+            "Orders (App)": state_agg["orders_app"],
+            "% Orders": state_agg["pct_orders"].apply(lambda x: f"{x}%"),
+            "Qty Total (MT)": state_agg["qty_total"].round(0).astype(int),
+            "Qty App (MT)": state_agg["qty_app"].round(0).astype(int),
+            "% Order Vol.": state_agg["pct_qty"].apply(lambda x: f"{x}%"),
         })
         state_display = state_display.sort_values(
-            "% app. installs", key=lambda s: s.str.replace("%", "").astype(float), ascending=False
+            "% Installs", key=lambda s: s.str.replace("%", "").astype(float), ascending=False
         )
 
         # Grand Total row
-        t_dealers = int(state_display["Target # dealers"].sum())
-        t_installs = int(state_display["# app. installs"].sum())
-        t_tech = int(state_display["# Tech Issues"].sum())
-        t_pending = int(state_display["# Pending Installations"].sum())
-        t_nw = int(state_display["# Not Working"].sum())
-        t_orders = int(state_display["# orders by target dealers"].sum())
-        t_orders_app = int(state_display["# orders on the app"].sum())
-        t_qty = int(state_display["Order quantity (MT) by target dealers"].sum())
-        t_qty_app = int(state_display["Order qty by dealers with app. installed"].sum())
+        t_dealers = int(state_display["Target #"].sum())
+        t_installs = int(state_display["Installs"].sum())
+        t_tech = int(state_display["Tech Issue"].sum())
+        t_pending = int(state_display["Pending"].sum())
+        t_nw = int(state_display["N/W"].sum())
+        t_orders = int(state_display["Orders (Total)"].sum())
+        t_orders_app = int(state_display["Orders (App)"].sum())
+        t_qty = int(state_display["Qty Total (MT)"].sum())
+        t_qty_app = int(state_display["Qty App (MT)"].sum())
 
         grand = pd.DataFrame([{
             "State": "G total",
-            "Target # dealers": t_dealers,
-            "# app. installs": t_installs,
-            "# Tech Issues": t_tech,
-            "# Pending Installations": t_pending,
-            "# Not Working": t_nw,
-            "% app. installs": f"{round(t_installs / max(t_dealers, 1) * 100)}%",
-            "# orders by target dealers": t_orders,
-            "# orders on the app": t_orders_app,
-            "% orders (by count)": f"{round(t_orders_app / max(t_orders, 1) * 100)}%",
-            "Order quantity (MT) by target dealers": t_qty,
-            "Order qty by dealers with app. installed": t_qty_app,
-            "% order vol.": f"{round(t_qty_app / max(t_qty, 1) * 100)}%",
+            "Target #": t_dealers,
+            "Installs": t_installs,
+            "Tech Issue": t_tech,
+            "Pending": t_pending,
+            "N/W": t_nw,
+            "% Installs": f"{round(t_installs / max(t_dealers, 1) * 100)}%",
+            "Orders (Total)": t_orders,
+            "Orders (App)": t_orders_app,
+            "% Orders": f"{round(t_orders_app / max(t_orders, 1) * 100)}%",
+            "Qty Total (MT)": t_qty,
+            "Qty App (MT)": t_qty_app,
+            "% Order Vol.": f"{round(t_qty_app / max(t_qty, 1) * 100)}%",
         }])
         state_display = pd.concat([state_display, grand], ignore_index=True)
 
         styled_state = (
             state_display.style
             .apply(_highlight_pct_columns, axis=None)
-            .apply(_bold_columns("State", "Target # dealers",
-                                  "% app. installs", "% orders (by count)", "% order vol."), axis=0)
+            .apply(_bold_columns("State", "Target #",
+                                  "% Installs", "% Orders", "% Order Vol."), axis=0)
         )
         st.dataframe(styled_state, use_container_width=True, hide_index=True, height=400)
 
