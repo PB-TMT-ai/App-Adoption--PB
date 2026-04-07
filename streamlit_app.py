@@ -363,44 +363,101 @@ def generate_excel_report(df):
     style_header(ws2)
     auto_width(ws2)
 
-    # Sheet 3: State-wise
-    ws3 = wb.create_sheet("State-wise Adoption")
-    ws3.append(["State", "Zone", "No. of Distributors", "No. of Dealers",
-                "Installed", "Not Installed", "Uninstalled", "Tech Issue / NW", "Adoption Rate (%)"])
-    if "State" in df.columns:
-        state_agg = df.groupby("State").agg(
-            zone=("Zone", "first") if "Zone" in df.columns else ("State", "count"),
-            distributors=("Distributor Name", "nunique") if "Distributor Name" in df.columns else ("State", "count"),
-            total=("Account Sf ID", "count"),
-            inst=("Status", lambda x: (x == "Installed").sum()),
-            ni=("Status", lambda x: (x == "Not Installed").sum()),
-            un=("Status", lambda x: (x == "Uninstalled").sum()),
-            oth=("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
-        ).reset_index()
-        state_agg["rate"] = (state_agg["inst"] / state_agg["total"] * 100).round(1)
-        state_agg = state_agg.sort_values("rate", ascending=False)
-        for _, r in state_agg.iterrows():
-            ws3.append([r["State"], r["zone"], int(r["distributors"]), int(r["total"]),
-                        int(r["inst"]), int(r["ni"]), int(r["un"]), int(r["oth"]), f"{r['rate']}%"])
+    # Sheet 3: Distributor-level Report
+    report_headers = [
+        "Distributor Name", "State", "Target # dealers", "# app. installs",
+        "# Tech Issues", "# Pending Installations", "# Not Working",
+        "% app. installs", "# orders by target dealers", "# orders on the app",
+        "% orders (by count)", "Order quantity (MT) by target dealers",
+        "Order qty by dealers with app. installed", "% order vol.",
+    ]
+    ws3 = wb.create_sheet("Distributor-level Report")
+    ws3.append(report_headers)
+
+    pct_fill_green = PatternFill(start_color="D1FAE5", end_color="D1FAE5", fill_type="solid")
+    pct_fill_yellow = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
+    pct_fill_red = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+
+    if "Distributor Name" in df.columns:
+        dist_agg = _build_reporting_agg(df, "Distributor Name")
+        if "State" in df.columns:
+            smap = df.groupby("Distributor Name")["State"].first().reset_index()
+            dist_agg = dist_agg.merge(smap, on="Distributor Name", how="left")
+        else:
+            dist_agg["State"] = ""
+        dist_agg = dist_agg.sort_values("pct_installs", ascending=False)
+        for _, r in dist_agg.iterrows():
+            ws3.append([
+                r["Distributor Name"], r.get("State", ""), int(r["target_dealers"]),
+                int(r["app_installs"]), int(r["tech_issues"]), int(r["pending"]),
+                int(r["not_working"]), f"{int(r['pct_installs'])}%",
+                int(r["orders_total"]), int(r["orders_app"]), f"{int(r['pct_orders'])}%",
+                round(r["qty_total"]), round(r["qty_app"]), f"{int(r['pct_qty'])}%",
+            ])
+
+    # Apply conditional fills to pct columns (8, 11, 14)
+    for ri in range(2, ws3.max_row + 1):
+        for ci in [8, 11, 14]:
+            cell = ws3.cell(row=ri, column=ci)
+            try:
+                val = float(str(cell.value).replace("%", ""))
+            except (ValueError, TypeError):
+                val = 0
+            cell.fill = pct_fill_green if val >= 50 else (pct_fill_yellow if val >= 25 else pct_fill_red)
     style_header(ws3)
     auto_width(ws3)
 
-    # Sheet 4: Distributor-wise
-    ws4 = wb.create_sheet("Distributor-wise Adoption")
-    ws4.append(["Distributor Name", "Total", "Installed", "Not Installed", "Uninstalled",
-                 "Other", "Adoption Rate (%)"])
-    if "Distributor Name" in df.columns:
-        dist = df.groupby("Distributor Name").agg(
-            total=("Account Sf ID", "count"),
-            inst=("Status", lambda x: (x == "Installed").sum()),
-            ni=("Status", lambda x: (x == "Not Installed").sum()),
-            un=("Status", lambda x: (x == "Uninstalled").sum()),
-            oth=("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
-        ).reset_index()
-        dist["rate"] = (dist["inst"] / dist["total"] * 100).round(1)
-        for _, r in dist.sort_values("rate", ascending=False).iterrows():
-            ws4.append([r["Distributor Name"], int(r["total"]), int(r["inst"]),
-                        int(r["ni"]), int(r["un"]), int(r["oth"]), f"{r['rate']}%"])
+    # Sheet 4: State-level Report
+    state_report_headers = [
+        "State", "Target # dealers", "# app. installs",
+        "# Tech Issues", "# Pending Installations", "# Not Working",
+        "% app. installs", "# orders by target dealers", "# orders on the app",
+        "% orders (by count)", "Order quantity (MT) by target dealers",
+        "Order qty by dealers with app. installed", "% order vol.",
+    ]
+    ws4 = wb.create_sheet("State-level Report")
+    ws4.append(state_report_headers)
+
+    if "State" in df.columns:
+        st_agg = _build_reporting_agg(df, "State")
+        st_agg = st_agg.sort_values("pct_installs", ascending=False)
+        for _, r in st_agg.iterrows():
+            ws4.append([
+                r["State"], int(r["target_dealers"]), int(r["app_installs"]),
+                int(r["tech_issues"]), int(r["pending"]), int(r["not_working"]),
+                f"{int(r['pct_installs'])}%", int(r["orders_total"]),
+                int(r["orders_app"]), f"{int(r['pct_orders'])}%",
+                round(r["qty_total"]), round(r["qty_app"]), f"{int(r['pct_qty'])}%",
+            ])
+        # Grand Total row
+        t_d = int(st_agg["target_dealers"].sum())
+        t_i = int(st_agg["app_installs"].sum())
+        t_ti = int(st_agg["tech_issues"].sum())
+        t_p = int(st_agg["pending"].sum())
+        t_nw = int(st_agg["not_working"].sum())
+        t_ot = int(st_agg["orders_total"].sum())
+        t_oa = int(st_agg["orders_app"].sum())
+        t_qt = round(st_agg["qty_total"].sum())
+        t_qa = round(st_agg["qty_app"].sum())
+        ws4.append([
+            "G total", t_d, t_i, t_ti, t_p, t_nw,
+            f"{round(t_i / max(t_d, 1) * 100)}%", t_ot, t_oa,
+            f"{round(t_oa / max(t_ot, 1) * 100)}%", t_qt, t_qa,
+            f"{round(t_qa / max(t_qt, 1) * 100)}%",
+        ])
+        # Bold the grand total row
+        for ci in range(1, 14):
+            ws4.cell(row=ws4.max_row, column=ci).font = Font(bold=True, size=11)
+
+    # Apply conditional fills to pct columns (7, 10, 13)
+    for ri in range(2, ws4.max_row + 1):
+        for ci in [7, 10, 13]:
+            cell = ws4.cell(row=ri, column=ci)
+            try:
+                val = float(str(cell.value).replace("%", ""))
+            except (ValueError, TypeError):
+                val = 0
+            cell.fill = pct_fill_green if val >= 50 else (pct_fill_yellow if val >= 25 else pct_fill_red)
     style_header(ws4)
     auto_width(ws4)
 
@@ -514,6 +571,61 @@ def _bold_columns(*col_names):
     return styler
 
 
+def _highlight_pct_columns(df_style):
+    """Apply cell-level color coding to percentage columns (green/yellow/red)."""
+    styles = pd.DataFrame("", index=df_style.index, columns=df_style.columns)
+    pct_cols = ["% app. installs", "% orders (by count)", "% order vol."]
+    for col in pct_cols:
+        if col in df_style.columns:
+            for idx in df_style.index:
+                raw = df_style.at[idx, col]
+                try:
+                    rate = float(str(raw).replace("%", ""))
+                except (ValueError, TypeError):
+                    rate = 0
+                if rate >= 50:
+                    styles.at[idx, col] = "background-color: #d1fae5; font-weight: 700"
+                elif rate >= 25:
+                    styles.at[idx, col] = "background-color: #fef3c7; font-weight: 700"
+                else:
+                    styles.at[idx, col] = "background-color: #fee2e2; font-weight: 700"
+    return styles
+
+
+def _build_reporting_agg(df, group_col):
+    """Build reporting table grouped by group_col with status counts, orders, and quantities."""
+    # Ensure numeric columns exist with defaults
+    for col in ["# orders (total)", "# orders (via. app.)"]:
+        if col not in df.columns:
+            df[col] = 0
+    for col in ["Order quantity (total)", "Quantity (via. app.)"]:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    agg = df.groupby(group_col).agg(
+        target_dealers=("Account Sf ID", "count"),
+        app_installs=("Status", lambda x: (x == "Installed").sum()),
+        tech_issues=("Status", lambda x: (x == "Tech Issue").sum()),
+        pending=("Status", lambda x: (x == "Not Installed").sum()),
+        not_working=("Status", lambda x: (x == "Not Working").sum()),
+        orders_total=("# orders (total)", "sum"),
+        orders_app=("# orders (via. app.)", "sum"),
+        qty_total=("Order quantity (total)", "sum"),
+        qty_app=("Quantity (via. app.)", "sum"),
+    ).reset_index()
+
+    agg["orders_total"] = agg["orders_total"].fillna(0).astype(int)
+    agg["orders_app"] = agg["orders_app"].fillna(0).astype(int)
+    agg["qty_total"] = agg["qty_total"].fillna(0)
+    agg["qty_app"] = agg["qty_app"].fillna(0)
+
+    agg["pct_installs"] = (agg["app_installs"] / agg["target_dealers"].replace(0, pd.NA) * 100).fillna(0).round(0).astype(int)
+    agg["pct_orders"] = (agg["orders_app"] / agg["orders_total"].replace(0, pd.NA) * 100).fillna(0).round(0).astype(int)
+    agg["pct_qty"] = (agg["qty_app"] / agg["qty_total"].replace(0, pd.NA) * 100).fillna(0).round(0).astype(int)
+
+    return agg
+
+
 # ============================================================================
 # SECTION 7 — MAIN UI
 # ============================================================================
@@ -616,75 +728,107 @@ tab_summary, tab_details, tab_orders, tab_risk = st.tabs([
 
 # ── Tab 1: Summary ──
 with tab_summary:
-    # Zone-wise
-    if "Zone" in filtered_df.columns:
-        st.subheader("Zone-wise Adoption")
-        zone_df = filtered_df.groupby("Zone").agg(
-            Total=("Account Sf ID", "count"),
-            Installed=("Status", lambda x: (x == "Installed").sum()),
-            Not_Installed=("Status", lambda x: (x == "Not Installed").sum()),
-            Uninstalled=("Status", lambda x: (x == "Uninstalled").sum()),
-            Other=("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
-        ).reset_index()
-        zone_df["Adoption %"] = (zone_df["Installed"] / zone_df["Total"] * 100).round(1)
-        zone_df = zone_df.sort_values("Adoption %", ascending=False)
-        zone_df.columns = ["Zone", "Total", "Installed", "Not Installed", "Uninstalled", "Tech Issue / NW", "Adoption %"]
-        zone_df["Adoption %"] = zone_df["Adoption %"].apply(lambda x: f"{x}%")
-        styled_zone = (
-            zone_df.style
-            .apply(_highlight_adoption_rate, axis=1)
-            .apply(_bold_columns("Zone", "Total", "Adoption %"), axis=0)
-        )
-        st.dataframe(styled_zone, use_container_width=True, hide_index=True)
-
-    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
-
-    # State-wise
-    if "State" in filtered_df.columns:
-        st.subheader("State-wise Adoption")
-        state_agg = filtered_df.groupby("State").agg(
-            Zone=("Zone", "first") if "Zone" in filtered_df.columns else ("State", "count"),
-            Distributors=("Distributor Name", "nunique") if "Distributor Name" in filtered_df.columns else ("State", "count"),
-            Total=("Account Sf ID", "count"),
-            Installed=("Status", lambda x: (x == "Installed").sum()),
-            Not_Installed=("Status", lambda x: (x == "Not Installed").sum()),
-            Uninstalled=("Status", lambda x: (x == "Uninstalled").sum()),
-            Other=("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
-        ).reset_index()
-        state_agg["Adoption %"] = (state_agg["Installed"] / state_agg["Total"] * 100).round(1)
-        state_agg = state_agg.sort_values("Adoption %", ascending=False)
-        state_agg.columns = ["State", "Zone", "No. of Distributors", "No. of Dealers",
-                             "Installed", "Not Installed", "Uninstalled", "Tech Issue / NW", "Adoption %"]
-        state_agg["Adoption %"] = state_agg["Adoption %"].apply(lambda x: f"{x}%")
-        styled_state = (
-            state_agg.style
-            .apply(_highlight_adoption_rate, axis=1)
-            .apply(_bold_columns("State", "No. of Dealers", "Adoption %"), axis=0)
-        )
-        st.dataframe(styled_state, use_container_width=True, hide_index=True)
-
-    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
-
-    # Distributor-wise
+    # ── Distributor-level Adoption & Orders ──
     if "Distributor Name" in filtered_df.columns:
-        st.subheader("Distributor-wise Adoption")
-        dist_df = filtered_df.groupby("Distributor Name").agg(
-            Total=("Account Sf ID", "count"),
-            Installed=("Status", lambda x: (x == "Installed").sum()),
-            Not_Installed=("Status", lambda x: (x == "Not Installed").sum()),
-            Uninstalled=("Status", lambda x: (x == "Uninstalled").sum()),
-            Other=("Status", lambda x: x.isin(["Tech Issue", "Not Working"]).sum()),
-        ).reset_index()
-        dist_df["Adoption %"] = (dist_df["Installed"] / dist_df["Total"] * 100).round(1)
-        dist_df = dist_df.sort_values("Adoption %", ascending=False)
-        dist_df.columns = ["Distributor Name", "Total", "Installed", "Not Installed", "Uninstalled", "Tech Issue / NW", "Adoption %"]
-        dist_df["Adoption %"] = dist_df["Adoption %"].apply(lambda x: f"{x}%")
+        st.subheader("Distributor-level Adoption & Orders")
+        dist_agg = _build_reporting_agg(filtered_df, "Distributor Name")
+
+        # Add State column (first state per distributor)
+        if "State" in filtered_df.columns:
+            state_map = filtered_df.groupby("Distributor Name")["State"].first().reset_index()
+            dist_agg = dist_agg.merge(state_map, on="Distributor Name", how="left")
+        else:
+            dist_agg["State"] = ""
+
+        dist_display = pd.DataFrame({
+            "Distributor Name": dist_agg["Distributor Name"],
+            "State": dist_agg["State"],
+            "Target # dealers": dist_agg["target_dealers"],
+            "# app. installs": dist_agg["app_installs"],
+            "# Tech Issues": dist_agg["tech_issues"],
+            "# Pending Installations": dist_agg["pending"],
+            "# Not Working": dist_agg["not_working"],
+            "% app. installs": dist_agg["pct_installs"].apply(lambda x: f"{x}%"),
+            "# orders by target dealers": dist_agg["orders_total"],
+            "# orders on the app": dist_agg["orders_app"],
+            "% orders (by count)": dist_agg["pct_orders"].apply(lambda x: f"{x}%"),
+            "Order quantity (MT) by target dealers": dist_agg["qty_total"].round(0).astype(int),
+            "Order qty by dealers with app. installed": dist_agg["qty_app"].round(0).astype(int),
+            "% order vol.": dist_agg["pct_qty"].apply(lambda x: f"{x}%"),
+        })
+        dist_display = dist_display.sort_values(
+            "% app. installs", key=lambda s: s.str.replace("%", "").astype(float), ascending=False
+        )
+
         styled_dist = (
-            dist_df.style
-            .apply(_highlight_adoption_rate, axis=1)
-            .apply(_bold_columns("Distributor Name", "Total", "Adoption %"), axis=0)
+            dist_display.style
+            .apply(_highlight_pct_columns, axis=None)
+            .apply(_bold_columns("Distributor Name", "Target # dealers",
+                                  "% app. installs", "% orders (by count)", "% order vol."), axis=0)
         )
         st.dataframe(styled_dist, use_container_width=True, hide_index=True, height=400)
+
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+    # ── State-level Adoption & Orders ──
+    if "State" in filtered_df.columns:
+        st.subheader("State-level Adoption & Orders")
+        state_agg = _build_reporting_agg(filtered_df, "State")
+
+        state_display = pd.DataFrame({
+            "State": state_agg["State"],
+            "Target # dealers": state_agg["target_dealers"],
+            "# app. installs": state_agg["app_installs"],
+            "# Tech Issues": state_agg["tech_issues"],
+            "# Pending Installations": state_agg["pending"],
+            "# Not Working": state_agg["not_working"],
+            "% app. installs": state_agg["pct_installs"].apply(lambda x: f"{x}%"),
+            "# orders by target dealers": state_agg["orders_total"],
+            "# orders on the app": state_agg["orders_app"],
+            "% orders (by count)": state_agg["pct_orders"].apply(lambda x: f"{x}%"),
+            "Order quantity (MT) by target dealers": state_agg["qty_total"].round(0).astype(int),
+            "Order qty by dealers with app. installed": state_agg["qty_app"].round(0).astype(int),
+            "% order vol.": state_agg["pct_qty"].apply(lambda x: f"{x}%"),
+        })
+        state_display = state_display.sort_values(
+            "% app. installs", key=lambda s: s.str.replace("%", "").astype(float), ascending=False
+        )
+
+        # Grand Total row
+        t_dealers = int(state_display["Target # dealers"].sum())
+        t_installs = int(state_display["# app. installs"].sum())
+        t_tech = int(state_display["# Tech Issues"].sum())
+        t_pending = int(state_display["# Pending Installations"].sum())
+        t_nw = int(state_display["# Not Working"].sum())
+        t_orders = int(state_display["# orders by target dealers"].sum())
+        t_orders_app = int(state_display["# orders on the app"].sum())
+        t_qty = int(state_display["Order quantity (MT) by target dealers"].sum())
+        t_qty_app = int(state_display["Order qty by dealers with app. installed"].sum())
+
+        grand = pd.DataFrame([{
+            "State": "G total",
+            "Target # dealers": t_dealers,
+            "# app. installs": t_installs,
+            "# Tech Issues": t_tech,
+            "# Pending Installations": t_pending,
+            "# Not Working": t_nw,
+            "% app. installs": f"{round(t_installs / max(t_dealers, 1) * 100)}%",
+            "# orders by target dealers": t_orders,
+            "# orders on the app": t_orders_app,
+            "% orders (by count)": f"{round(t_orders_app / max(t_orders, 1) * 100)}%",
+            "Order quantity (MT) by target dealers": t_qty,
+            "Order qty by dealers with app. installed": t_qty_app,
+            "% order vol.": f"{round(t_qty_app / max(t_qty, 1) * 100)}%",
+        }])
+        state_display = pd.concat([state_display, grand], ignore_index=True)
+
+        styled_state = (
+            state_display.style
+            .apply(_highlight_pct_columns, axis=None)
+            .apply(_bold_columns("State", "Target # dealers",
+                                  "% app. installs", "% orders (by count)", "% order vol."), axis=0)
+        )
+        st.dataframe(styled_state, use_container_width=True, hide_index=True, height=400)
 
 # ── Tab 2: Dealer Details ──
 with tab_details:
