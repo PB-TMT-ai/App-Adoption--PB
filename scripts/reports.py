@@ -271,7 +271,7 @@ def generate_reports():
 
     risk_statuses = {"Uninstalled": "Re-engage: app was uninstalled",
                      "Tech Issue": "Resolve technical issue",
-                     "Not Working": "Fix: app not working"}
+                     "Not Working": "Dealer not working"}
 
     risk_df = df[df["Status"].isin(risk_statuses.keys())].copy()
     risk_df["Action Needed"] = risk_df["Status"].map(risk_statuses)

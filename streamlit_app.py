@@ -4,7 +4,9 @@ Upload your Excel file and view adoption metrics instantly.
 Styled to match Q4 Scheme Dashboard.
 """
 
+import glob
 import io
+import os
 from datetime import datetime
 
 import pandas as pd
@@ -225,10 +227,26 @@ def _status_card(status, count, total, color):
 # SECTION 4 — DATA LOADING & VALIDATION
 # ============================================================================
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+
+def _find_data_file():
+    """Find the newest .xlsx file in the data/ directory."""
+    if not os.path.isdir(DATA_DIR):
+        return None
+    xlsx_files = sorted(glob.glob(os.path.join(DATA_DIR, "*.xlsx")), reverse=True)
+    # Exclude temp/hidden files
+    xlsx_files = [f for f in xlsx_files if not os.path.basename(f).startswith(("~", "."))]
+    return xlsx_files[0] if xlsx_files else None
+
+
 @st.cache_data
-def load_and_clean(uploaded_bytes):
-    """Load Excel bytes into a cleaned DataFrame."""
-    df = pd.read_excel(io.BytesIO(uploaded_bytes), engine="openpyxl", dtype=str)
+def load_and_clean(source):
+    """Load Excel from file path (str) or uploaded bytes into a cleaned DataFrame."""
+    if isinstance(source, str):
+        df = pd.read_excel(source, engine="openpyxl", dtype=str)
+    else:
+        df = pd.read_excel(io.BytesIO(source), engine="openpyxl", dtype=str)
     df.columns = [c.strip() for c in df.columns]
 
     int_cols = ["# orders (total)", "# orders (via. app.)"]
@@ -246,7 +264,7 @@ def load_and_clean(uploaded_bytes):
     float_cols = ["% orders via. app.", "% order quantity (via. app.)"]
     for col in float_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce") * 100
 
     return df
 
@@ -400,7 +418,7 @@ def generate_excel_report(df):
     ws6.append(["Account Sf ID", "Name of the Dealer", "State", "Zone",
                 "Distributor Name", "Account Owner As per SF", "Mobile No.", "Status", "Action Needed"])
     risk_map = {"Uninstalled": "Re-engage: app was uninstalled",
-                "Tech Issue": "Resolve technical issue", "Not Working": "Fix: app not working"}
+                "Tech Issue": "Resolve technical issue", "Not Working": "Dealer not working"}
     risk = df[df["Status"].isin(risk_map.keys())].copy()
     risk["Action Needed"] = risk["Status"].map(risk_map)
     risk = risk.sort_values("Status")
@@ -494,28 +512,23 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Sidebar: File Upload ──
-with st.sidebar:
-    st.header("Upload Data")
+# ── Data Loading: auto-detect from data/ folder ──
+data_file = _find_data_file()
+data_source_name = None
+
+if data_file:
+    df = load_and_clean(data_file)
+    data_source_name = os.path.basename(data_file)
+else:
+    st.warning("No Excel file found in `data/` folder. Upload one below.")
     uploaded_file = st.file_uploader(
         "Upload your Excel file",
         type=["xlsx", "xls"],
-        help="Upload the app adoption Excel file with dealer data",
     )
-    if uploaded_file:
-        st.success(f"Loaded: {uploaded_file.name}")
-    st.markdown("---")
-    st.markdown("**Expected columns:**")
-    st.markdown("- Account Sf ID *(required)*\n- Name of the Dealer *(required)*\n- Status *(required)*\n- State, Zone, Distributor Name\n- Order data columns")
-
-# ── Guard: no file uploaded ──
-if uploaded_file is None:
-    st.info("👈 Upload your Excel file in the sidebar to get started.")
-    st.stop()
-
-# ── Load & Validate ──
-raw_bytes = uploaded_file.getvalue()
-df = load_and_clean(raw_bytes)
+    if uploaded_file is None:
+        st.stop()
+    df = load_and_clean(uploaded_file.getvalue())
+    data_source_name = uploaded_file.name
 
 is_valid, errors = validate_data(df)
 if not is_valid:
@@ -525,7 +538,7 @@ if not is_valid:
     st.stop()
 
 # ── Data source caption ──
-st.caption(f"Data source: `{uploaded_file.name}` — {len(df)} dealers loaded")
+st.caption(f"Data source: `{data_source_name}` — {len(df)} dealers loaded")
 
 # ── Global Cascading Filters ──
 st.markdown(
@@ -710,7 +723,7 @@ with tab_orders:
 # ── Tab 4: At Risk ──
 with tab_risk:
     risk_map = {
-        "Not Working": "Fix: app not working",
+        "Not Working": "Dealer not working",
         "Tech Issue": "Resolve technical issue",
         "Uninstalled": "Re-engage: app was uninstalled",
     }
