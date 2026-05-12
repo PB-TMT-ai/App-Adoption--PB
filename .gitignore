@@ -6,7 +6,6 @@ __pycache__/
 venv/
 
 # Data files (user-generated, not tracked)
-data/*.csv
 uploads/*.xlsx
 uploads/processed/*.xlsx
 reports/*.xlsx
