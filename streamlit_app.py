@@ -230,21 +230,31 @@ def _status_card(status, count, total, color):
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
+MASTER_CSV = os.path.join(DATA_DIR, "app_adoption.csv")
+
+
 def _find_data_file():
-    """Find the newest .xlsx file in the data/ directory."""
+    """Return the master DB CSV if it exists, otherwise the newest .xlsx upload."""
+    if os.path.isfile(MASTER_CSV):
+        return MASTER_CSV
     if not os.path.isdir(DATA_DIR):
         return None
-    xlsx_files = sorted(glob.glob(os.path.join(DATA_DIR, "*.xlsx")), reverse=True)
+    xlsx_files = glob.glob(os.path.join(DATA_DIR, "*.xlsx"))
     # Exclude temp/hidden files
     xlsx_files = [f for f in xlsx_files if not os.path.basename(f).startswith(("~", "."))]
-    return xlsx_files[0] if xlsx_files else None
+    if not xlsx_files:
+        return None
+    return max(xlsx_files, key=os.path.getmtime)
 
 
 @st.cache_data
 def load_and_clean(source):
-    """Load Excel from file path (str) or uploaded bytes into a cleaned DataFrame."""
+    """Load CSV path, Excel path, or uploaded Excel bytes into a cleaned DataFrame."""
     if isinstance(source, str):
-        df = pd.read_excel(source, engine="openpyxl", dtype=str)
+        if source.lower().endswith(".csv"):
+            df = pd.read_csv(source, dtype=str)
+        else:
+            df = pd.read_excel(source, engine="openpyxl", dtype=str)
     else:
         df = pd.read_excel(io.BytesIO(source), engine="openpyxl", dtype=str)
     df.columns = [c.strip() for c in df.columns]
