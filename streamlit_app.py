@@ -231,13 +231,15 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
 def _find_data_file():
-    """Find the newest .xlsx file in the data/ directory."""
+    """Find the most recently modified .xlsx file in the data/ directory."""
     if not os.path.isdir(DATA_DIR):
         return None
-    xlsx_files = sorted(glob.glob(os.path.join(DATA_DIR, "*.xlsx")), reverse=True)
+    xlsx_files = glob.glob(os.path.join(DATA_DIR, "*.xlsx"))
     # Exclude temp/hidden files
     xlsx_files = [f for f in xlsx_files if not os.path.basename(f).startswith(("~", "."))]
-    return xlsx_files[0] if xlsx_files else None
+    if not xlsx_files:
+        return None
+    return max(xlsx_files, key=os.path.getmtime)
 
 
 @st.cache_data
